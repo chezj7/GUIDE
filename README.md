@@ -1,22 +1,23 @@
-# Introduction
+<div align="center">
 
-GUIDE is a a novel exploration framework that synergistically combines global graph inference with diffusion-based decision-making.
+# GUIDE: A Diffusion-Based Autonomous Robot Exploration Framework Using Global Graph Inference
 
-This work has been accepted by the IEEE International Conference on Robotics and Automation (ICRA) 2026.
+</div>
+
+
+## :memo:Paper
+
+
+This is a a novel exploration framework that synergistically combines global graph inference with diffusion-based decision-making.
+
+This work has been accepted by the **IEEE International Conference on Robotics and Automation (ICRA) 2026**.
+
+**Paper link:** https://arxiv.org/abs/2509.19916
 
 ---
 
-## Paper
 
-GUIDE: A Diffusion-Based Autonomous Robot Exploration Framework Using Global Graph Inference  
-
-Paper link: https://arxiv.org/abs/2509.19916
-
----
-
-
-
-## Code Release Plan
+## :rocket:Code Release Plan
 
 The code will come soon.
 
