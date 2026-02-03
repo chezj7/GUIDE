@@ -1,6 +1,6 @@
-# GUIDE
+# Introduction
 
-GUIDE is a a novel exploration framework that synergistically combines global graph inference with diffusion-based decision-making.
+GUIDE is a a novel exploration framework that synergistically combines global graph inference with diffusion-based decision-making.
 
 This work has been accepted by the IEEE International Conference on Robotics and Automation (ICRA) 2026.
 
