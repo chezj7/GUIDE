@@ -5,7 +5,7 @@
 ### A Global Graph Inference and Diffusion-Based Framework for Autonomous Robot Exploration
 
 **Zijun Che<sup>*</sup>**, **Yinghong Zhang<sup>*</sup>**,  
-Shengyi Liang, Boyu Zhou, Jun Ma, **Jinni Zhou<sup>†</sup>**
+**Shengyi Liang**, **Boyu Zhou**, **Jun Ma**, **Jinni Zhou<sup>†</sup>**
 
 <sup>*</sup> Equal Contribution &nbsp;&nbsp;&nbsp;
 <sup>†</sup> Corresponding Author
