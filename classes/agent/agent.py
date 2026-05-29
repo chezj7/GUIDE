@@ -36,6 +36,7 @@ class Agent:
         self.regions = None
         self.regions_state = None
         self.unknown_centers = None
+        self.confident_state = None
 
         # node managers
         self.node_manager = node_manager
@@ -139,16 +140,24 @@ class Agent:
         self.update_map(map_info)
         self.update_location(location)
         self.update_updating_map(self.location)
-        self.divide_map_into_regions(self.location)
         self.update_frontiers()
+        self.divide_map_into_regions(self.location,       
+                                 frontiers=self.frontier)
         self.node_manager.update_graph(self.location,
                                        self.frontier,
                                        self.updating_map_info,
                                        self.map_info,self.regions_state,
-                                       self.unknown_centers)
+                                       self.unknown_centers
+                                       ,self.confident_state)
 
-    def divide_map_into_regions(self,location):  
-        self.regions,self.regions_state,self.unknown_centers = get_map_into_regions(self.map_info,location)
+    def divide_map_into_regions(self, location, frontiers=None, mode=None):
+        self.regions, self.regions_state, self.unknown_centers, self.confident_state = get_map_into_regions(
+            self.map_info,
+            location,
+            block_size_in_cells=BLOCK_SIZE_IN_CELLS,
+            update_window_in_cells=UPDATE_WINDOW_SIZE,
+            frontiers=list(frontiers) if frontiers is not None else None,
+        )
     
     def update_planning_state(self, robot_locations):
         # self.node_coords, self.utility, self.guidepost, self.adjacent_matrix, self.current_index, self.neighbor_indices = \

@@ -95,7 +95,7 @@ class GlobalPredictor:
 
         image_np = image_rgb.cpu().numpy()     # [1,3,H,W]
         mask_np = mask_tensor.cpu().numpy()    # [1,1,H,W]
-        print(f"[send] image_np shape: {image_np.shape}, mask_np shape: {mask_np.shape}")
+        # print(f"[send] image_np shape: {image_np.shape}, mask_np shape: {mask_np.shape}")
 
         send_data = pickle.dumps({'image': image_np, 'mask': mask_np})
         self.socket.send(send_data)

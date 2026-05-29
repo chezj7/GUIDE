@@ -15,6 +15,7 @@ from classes.agent.agent import Agent
 from classes.agent.node_manager import NodeManager
 from classes.planner.expert_planner import ExpertPlanner
 from classes.planner.ground_truth_planner import GroundTruthPlanner
+from classes.predictor.global_predictor import GlobalPredictor
 
 if not os.path.exists(gifs_path):
     os.makedirs(gifs_path)
@@ -41,11 +42,11 @@ class DatasetWorker:
         self.greedy = greedy
 
         self.env = Env(global_step, n_agent=TEST_N_AGENTS, plot=self.save_image, test=USE_TEST_DATASET)
-        self.node_manager = NodeManager(plot=self.save_image)
+        self.node_manager = NodeManager(map_info=self.env.belief_info,plot=self.save_image)
 
         self.robot_list = [Agent(i, self.node_manager, self.device, self.save_image) for i in
                            range(self.env.n_agent)]
-
+        self.global_predictor = GlobalPredictor(self.env.belief_info)
         self.episode_data = dict()
         self.perf_metrics = dict()
 
@@ -75,14 +76,16 @@ class DatasetWorker:
 
         if DATASET_METHOD == 'tare':
             self.env.expert_planner = ExpertPlanner(self.node_manager)
+            paths = self.env.get_expert_paths()
+            self.robot_list[0].global_path = paths[0]
         if DATASET_METHOD == 'ground_truth':
             self.env.ground_truth_planner = GroundTruthPlanner(self.env.ground_truth_info, robot.node_manager)
-            paths = self.env.get_ground_truth_paths()
-            self.robot_list[0].global_path = paths[0]
+            # paths = self.env.get_ground_truth_paths()
+            # self.robot_list[0].global_path = paths[0]
             
         if DATASET_METHOD == 'ground_truth_no_replan':
             self.env.ground_truth_planner = GroundTruthPlanner(self.env.ground_truth_info, robot.node_manager)
-            paths = self.env.get_ground_truth_paths()
+            # paths = self.env.get_ground_truth_paths()
 
         for step in range(MAX_EPISODE_STEP): 
             selected_locations = []
@@ -131,12 +134,59 @@ class DatasetWorker:
                         action_list.append(np.array(path[0]))
                     path.pop(0)
                 dist_list = [k for k in range(self.env.n_agent)]
+            # if DATASET_METHOD == 'tare':
+            #     paths = self.env.get_expert_paths()
+            #     for i, path in enumerate(paths):
+            #         if not path:  
+            #             cur = np.array(self.env.robot_locations[i])
+            #             selected_locations.append(cur)
+            #             action_list.append(np.zeros_like(cur) if USE_DELTA_POSITION else cur)
+            #             continue
+            #         selected_locations.append(np.array(path[0]))
+            #         if USE_DELTA_POSITION:
+            #             action_list.append(np.array(path[0] - self.env.robot_locations[i]))
+            #         else:
+            #             action_list.append(np.array(path[0]))
+            #     dist_list = [k for k in range(self.env.n_agent)]
+            
+            # if DATASET_METHOD == 'ground_truth':
+            #     paths = self.env.get_ground_truth_paths()
+            #     for i, path in enumerate(paths):
+            #         if not path:  
+            #             cur = np.array(self.env.robot_locations[i])
+            #             selected_locations.append(cur)
+            #             action_list.append(np.zeros_like(cur) if USE_DELTA_POSITION else cur)
+            #             continue
+            #         selected_locations.append(np.array(path[0]))
+            #         if USE_DELTA_POSITION:
+            #             action_list.append(np.array(path[0] - self.env.robot_locations[i]))
+            #         else:
+            #             action_list.append(np.array(path[0]))
+            #     dist_list = [k for k in range(self.env.n_agent)]
+
+            # if DATASET_METHOD == 'ground_truth_no_replan':
+            #     for i, path in enumerate(paths):
+            #         if not path: 
+            #             cur = np.array(self.env.robot_locations[i])
+            #             selected_locations.append(cur)
+            #             action_list.append(np.zeros_like(cur) if USE_DELTA_POSITION else cur)
+            #             continue
+            #         selected_locations.append(np.array(path[0]))
+            #         if USE_DELTA_POSITION:
+            #             action_list.append(np.array(path[0] - self.env.robot_locations[i]))
+            #         else:
+            #             action_list.append(np.array(path[0]))
+            #         path.pop(0)  
+            #     dist_list = [k for k in range(self.env.n_agent)]
+
+
+
 
             if self.save_image:
                 planned_paths = None
                 if DATASET_METHOD == "ground_truth" or DATASET_METHOD == "tare" or DATASET_METHOD == "ground_truth_no_replan":
                     planned_paths = paths
-                self.plot_env(step, planned_paths)
+                    self.plot_env(step, planned_paths)
                 # self.plot_real(step)
 
             # check if the selected locations are the same FOR future multi-agent
@@ -161,7 +211,10 @@ class DatasetWorker:
                     selected_locations_in_arriving_sequence[j] = selected_location
                     selected_locations[id] = selected_location
 
-            for robot, next_location in zip(self.robot_list, selected_locations):update
+            for robot, next_location in zip(self.robot_list, selected_locations):
+                self.env.step(next_location, robot.id)
+
+                robot.update_graph(self.env.belief_info, deepcopy(self.env.robot_locations[robot.id]))
 
             for robot in self.robot_list:
                 robot.update_planning_state(self.env.robot_locations)
@@ -278,7 +331,14 @@ class DatasetWorker:
         plt.close()
 
     def plot_real(self, step):
-        self.regions,self.regions_state,self.unknown_centers = get_map_into_regions(self.env.belief_info,self.env.robot_locations[0])
+        frontiers = getattr(self.env, "global_frontiers", None)  
+        self.regions, self.regions_state, self.unknown_centers, self.confident_state = get_map_into_regions(
+            self.env.belief_info,
+            self.env.robot_locations[0],
+            block_size_in_cells=BLOCK_SIZE_IN_CELLS,
+            update_window_in_cells=UPDATE_WINDOW_SIZE,
+            frontiers=list(frontiers)   
+        )
         plt.switch_backend('agg')
         fig, ax = plt.subplots(figsize=(6, 6))
         
@@ -290,9 +350,9 @@ class DatasetWorker:
                 x_start = j * region.shape[1]
                 height = region.shape[0]
                 width = region.shape[1]
-                state = self.regions_state[i][j]
+                state = self.confident_state[i][j]
                 
-                color = 'lime' if state == FREE else 'red'
+                color = 'lime' if state == True else 'red'
                 rect = patches.Rectangle((x_start, y_start), width, height,
                                         linewidth=1.5, edgecolor=color, facecolor='none')
                 ax.add_patch(rect)

@@ -9,7 +9,7 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 10  # WATCH
+horizon: 8  # WATCH
 n_obs_steps: 2 # WATCH
 n_action_steps: 1 # WATCH
 n_latency_steps: 0

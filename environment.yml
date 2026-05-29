@@ -1,4 +1,4 @@
-name: env_dare
+name: GUIDE
 channels:
   - defaults
   - pytorch

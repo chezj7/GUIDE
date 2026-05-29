@@ -9,17 +9,17 @@ TEST_N_AGENTS = 1 # SINGLE AGENT keep it 1
 ## Environment Runner Options
 USE_GPU = True  # do you want to use GPUS?
 NUM_GPU = 1  # the number of GPUs
-NUM_META_AGENT = 10  # the number of processes
+NUM_META_AGENT = 1 # the number of processes
 
-NUM_TEST = 100
+NUM_TEST = 10
 NUM_RUN = 1
-SAVE_GIFS = False # do you want to save GIFs
+SAVE_GIFS = True # do you want to save GIFs
 
 ACTION_HORIZON = None # None for 1 horizon
 
 ## Name and Path
 run_path = f'runs/best'
-checkpoint_name = 'epoch=0160-val_loss=0.054.ckpt'
+checkpoint_name = 'epoch=0190-val_loss=0.059.ckpt'
 gifs_path = f'{run_path}/gifs'
 real_path = f'{run_path}/real'
 observe_path = f'{run_path}/observe'

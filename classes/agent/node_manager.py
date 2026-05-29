@@ -14,6 +14,10 @@ class NodeManager:
         self.last_obstacle_coords = np.empty((0, 2))  # 保存当前帧
         self.all_obstacle_coords = set()
         self.global_predictor = GlobalPredictor(map_info)
+        self.node_anchor_x, self.node_anchor_y = compute_node_grid_anchor(map_info, NODE_RESOLUTION)
+        # ② 像素->世界的固定偏移（等价于你过去的 +1.5 / +0.5）
+        self.idx2world_off_x = self.node_anchor_x - map_info.map_origin_x
+        self.idx2world_off_y = self.node_anchor_y - map_info.map_origin_y
     def check_node_exist_in_dict(self, coords):
         key = (coords[0], coords[1])
         exist = self.nodes_dict.find(key)
@@ -32,12 +36,32 @@ class NodeManager:
         self.nodes_dict.insert(point=key, data=node)
         return node
     
+    # def remove_node_from_dict(self, node):
+    #     for neighbor_coords in node.neighbor_list[1:]:
+    #         neighbor_node = self.nodes_dict.find(neighbor_coords)
+    #         neighbor_node.data.neighbor_list.remove(node.coords.tolist())
+    #     self.nodes_dict.remove(node.coords)
     def remove_node_from_dict(self, node):
+        self_key = (float(node.coords[0]), float(node.coords[1]))
+
         for neighbor_coords in node.neighbor_list[1:]:
-            neighbor_node = self.nodes_dict.find(neighbor_coords)
-            neighbor_node.data.neighbor_list.remove(node.coords.tolist())
-        self.nodes_dict.remove(node.coords)
-    
+            # 都规范为 tuple(float, float)
+            nc = np.asarray(neighbor_coords, dtype=float)
+            neighbor_key = (float(nc[0]), float(nc[1]))
+
+            neighbor_node = self.nodes_dict.find(neighbor_key)
+            if neighbor_node is None:
+                continue
+            try:
+                neighbor_node.data.neighbor_list.remove((node.coords[0], node.coords[1]))
+            except ValueError:
+                try:
+                    neighbor_node.data.neighbor_list.remove([node.coords[0], node.coords[1]])
+                except ValueError:
+                    pass
+
+        self.nodes_dict.remove(self_key)
+
     def clear_unknown_nodes(self):
         # 遍历所有节点，删除所有 is_unknown_node == True 的节点
         nodes_to_remove = []
@@ -68,7 +92,7 @@ class NodeManager:
                     filtered_centers.add(tuple(nb_center))  # 转为tuple便于set操作
         return list(filtered_centers)
     
-    def update_graph(self, robot_location, frontiers, updating_map_info, map_info, regions_state,unknown_centers):
+    def update_graph(self, robot_location, frontiers, updating_map_info, map_info, regions_state,unknown_centers,confident_state):
         
         # Step 1: 获取自由节点（当前帧）
         self.clear_unknown_nodes()
@@ -99,67 +123,80 @@ class NodeManager:
         self.obstacle_coords = obstacle_coords
         self.last_obstacle_coords = np.array(list(self.all_obstacle_coords))
 
-        print(f"[Debug] Generated {len(obstacle_coords)} new obs nodes. Total: {len(self.all_obstacle_coords)}")
+        # print(f"[Debug] Generated {len(obstacle_coords)} new obs nodes. Total: {len(self.all_obstacle_coords)}")
         free_coords = np.array(list(self.all_free_node_coords))
         obs_coords = np.array(list(self.all_obstacle_coords))
         self.global_predictor.update_nodes(free_coords, obs_coords)
-        inpainted_image, mask_cropped = self.global_predictor.request_lama_prediction()
-        self.lama_rgb_image = inpainted_image
+        # inpainted_image, mask_cropped = self.global_predictor.request_lama_prediction()
+        # self.lama_rgb_image = inpainted_image
+        # gray_image = np.mean(inpainted_image, axis=2) / 255.0
+        # binary_image = (gray_image >= 0.7).astype(np.uint8) * 255
+        # # 找出原始为未知区域的像素（mask==1）中，现在被预测为自由的区域
+        # mask_np = mask_cropped.detach().cpu().squeeze().numpy() if hasattr(mask_cropped, "detach") else mask_cropped.squeeze()
+        # predicted_free_mask = (binary_image == 255) & (mask_np == 1)
 
-        # 1️⃣ 提取灰度图，并二值化
-        gray_image = np.mean(inpainted_image, axis=2) / 255.0
-        binary_image = np.zeros_like(gray_image, dtype=np.uint8)
-        binary_image[gray_image >= 0.3] = 255
-        binary_image[gray_image < 0.7] = 0
+        # # 提取这些像素的图像坐标
+        # predicted_indices = np.argwhere(predicted_free_mask)  # [[y1, x1], [y2, x2], ...]
+        # wx = map_info.map_origin_x + self.idx2world_off_x + predicted_indices[:, 1] * NODE_RESOLUTION  # x = 列
+        # wy = map_info.map_origin_y + self.idx2world_off_y + predicted_indices[:, 0] * NODE_RESOLUTION  # y = 行
+        # predicted_world = np.stack([wx, wy], axis=1)
 
-        # 2️⃣ 找出原始为未知区域的像素（mask==1）中，现在被预测为自由的区域
-        mask_cropped = mask_cropped.squeeze()         # [H, W]
-        predicted_free_mask = (binary_image == 255) & (mask_cropped.numpy() == 1)
+        # # 去重并转 tuple（和你原流程一致）
+        # predicted_coords_rounded = [tuple(pt) for pt in np.unique(np.round(predicted_world, 2), axis=0)]
 
-        # 3️⃣ 提取这些像素的图像坐标
-        predicted_indices = np.argwhere(predicted_free_mask)  # [[y1, x1], [y2, x2], ...]
-
-        # 4️⃣ 将这些图像坐标映射回世界坐标
-        def pixel_to_world_coords(indices):
-            y, x = indices[:, 0], indices[:, 1]
-            real_x = x * NODE_RESOLUTION + 1.5 + map_info.map_origin_x
-            real_y = y * NODE_RESOLUTION + 0.5 + map_info.map_origin_y
-            return np.stack([real_x, real_y], axis=1)
-
-        predicted_coords = pixel_to_world_coords(predicted_indices)
-
-        # 5️⃣ 四舍五入对齐到已有节点精度（保留两位小数）
-        # predicted_coords_rounded = [np.round(c, 2) for c in predicted_coords]  # np.array 保持类型
-        # new_unknown_coords = [
-        #     c for c in predicted_coords_rounded
-        #     if self.check_node_exist_in_dict(tuple(c)) is None  # 用 tuple(c) 做查找
-        # ]
-        predicted_coords_rounded = [np.round(c, 2) for c in predicted_coords]
-        _, region_states, _ = get_map_into_regions(
-            map_info=map_info,
-            location=robot_location,
-            block_size_in_cells=BLOCK_SIZE_IN_CELLS,
-            update_window_in_cells=UPDATE_WINDOW_SIZE
-        )
-        # 只保留处于 FREE 大块中的预测坐标
+        # cs = np.asarray(confident_state, dtype=bool)  
+        # n_rows, n_cols = cs.shape
+        # new_unknown_coords = []
+        # for c in predicted_coords_rounded:
+        #     if self.check_node_exist_in_dict(c) is not None:
+        #         continue
+        #     try:
+        #         row_idx, col_idx = get_region_index_from_point(
+        #             map_info, c, block_size_in_cells=BLOCK_SIZE_IN_CELLS
+        #         )
+        #     except Exception:
+        #         continue
+        #     if 0 <= row_idx < n_rows and 0 <= col_idx < n_cols and cs[row_idx, col_idx]:
+        #         new_unknown_coords.append(c)
+        # new_unknown_coords = filter_isolated_predicted_coords(new_unknown_coords)
         new_unknown_coords = []
-        for c in predicted_coords_rounded:
-            coord_tuple = tuple(c)
-            if self.check_node_exist_in_dict(coord_tuple) is not None:
-                continue
-            try:
-                row_idx, col_idx = get_region_index_from_point(
-                    map_info, coord_tuple, block_size_in_cells=BLOCK_SIZE_IN_CELLS
-                )
-                if region_states[row_idx][col_idx] != FREE:
-                    continue  
-            except IndexError:
-                continue  
-            new_unknown_coords.append(coord_tuple)
-        print(f"[Debug] Filtered predicted coords: {len(predicted_coords_rounded)} → {len(new_unknown_coords)}")
-        
+        if ENABLE_PREDICTED_NODES:
+            # === 只有启用时才调用 LaMa ===
+            inpainted_image, mask_cropped = self.global_predictor.request_lama_prediction()
+            self.lama_rgb_image = inpainted_image
+
+            gray_image = np.mean(inpainted_image, axis=2) / 255.0
+            binary_image = (gray_image >= 0.7).astype(np.uint8) * 255
+
+            mask_np = mask_cropped.detach().cpu().squeeze().numpy() if hasattr(mask_cropped, "detach") else mask_cropped.squeeze()
+            predicted_free_mask = (binary_image == 255) & (mask_np == 1)
+
+            predicted_indices = np.argwhere(predicted_free_mask)
+            wx = map_info.map_origin_x + self.idx2world_off_x + predicted_indices[:, 1] * NODE_RESOLUTION
+            wy = map_info.map_origin_y + self.idx2world_off_y + predicted_indices[:, 0] * NODE_RESOLUTION
+            predicted_world = np.stack([wx, wy], axis=1)
+            predicted_coords_rounded = [tuple(pt) for pt in np.unique(np.round(predicted_world, 2), axis=0)]
+
+            cs = np.asarray(confident_state, dtype=bool)
+            n_rows, n_cols = cs.shape
+            for c in predicted_coords_rounded:
+                if self.check_node_exist_in_dict(c) is not None:
+                    continue
+                try:
+                    row_idx, col_idx = get_region_index_from_point(map_info, c, block_size_in_cells=BLOCK_SIZE_IN_CELLS)
+                except Exception:
+                    continue
+                if 0 <= row_idx < n_rows and 0 <= col_idx < n_cols and cs[row_idx, col_idx]:
+                    new_unknown_coords.append(c)
+
+            new_unknown_coords = filter_isolated_predicted_coords(new_unknown_coords)
+        else:
+            # 不需要预测节点时，不做推理，不保存 lama_rgb_image
+            self.lama_rgb_image = None
+            new_unknown_coords = []
+
         all_node_list = []
-        # 6️⃣ 去除已存在节点，只添加新的预测点
+        
         for coords in node_coords:
             node = self.check_node_exist_in_dict(coords)
             if node is None:
@@ -171,26 +208,28 @@ class NodeManager:
                 else:
                     node.update_node_observable_frontiers(frontiers, updating_map_info, map_info,new_unknown_coords=new_unknown_coords)
             all_node_list.append(node)
-        # for coord in new_unknown_coords:
-        #         coord_tuple = tuple(coord)
-        #         node = self.check_node_exist_in_dict(coord_tuple)
-        #         if node is None:           
-        #             node = self.add_node_to_dict_unknown(coord_tuple, frontiers, map_info,new_unknown_coords=new_unknown_coords)
-        #         else:
-        #             node = node.data           
-        #         all_node_list.append(node)
+        if ADD_PREDICTED_TO_GRAPH:
+            for coord in new_unknown_coords:
+                    coord_tuple = tuple(coord)
+                    node = self.check_node_exist_in_dict(coord_tuple)
+                    if node is None:           
+                        node = self.add_node_to_dict_unknown(coord_tuple, frontiers, map_info,new_unknown_coords=new_unknown_coords)
+                    else:
+                        node = node.data           
+                    all_node_list.append(node)
 
-        print(f"[Debug] Predicted new unknown nodes: {len(new_unknown_coords)}")
-        if unknown_centers is not None:
-            filtered_centers = self.filter_connected_unknown_centers(unknown_centers, map_info, regions_state)
-            for center in filtered_centers:
-                center_tuple = tuple(center)
-                node = self.check_node_exist_in_dict(center_tuple)
-                if node is None:           
-                    node = self.add_node_to_dict_unknown(center_tuple, frontiers, map_info,robot_location)
-                else:
-                    node = node.data           
-                all_node_list.append(node)
+        # print(f"[Debug] Predicted new unknown nodes: {len(new_unknown_coords)}")
+        if ADD_UNKNOW_TO_GRAPH:
+            if unknown_centers is not None:
+                # filtered_centers = self.filter_connected_unknown_centers(unknown_centers, map_info, regions_state)
+                for center in unknown_centers:
+                    center_tuple = tuple(center)
+                    node = self.check_node_exist_in_dict(center_tuple)
+                    if node is None:           
+                        node = self.add_node_to_dict_unknown(center_tuple, frontiers, map_info,robot_location)
+                    else:
+                        node = node.data           
+                    all_node_list.append(node)
       
 
         # Step 8: 更新邻接关系
@@ -239,6 +278,24 @@ class NodeManager:
                         if not collision:
                             adjacent_matrix[i, index_nb] = 2  # 连为2表示utility有效点的邻居连边
                             adjacent_matrix[index_nb, i] = 2
+                for j, (unk_coords, is_unk) in enumerate(zip(all_node_coords, is_unknown_list)):
+                    if is_unk:
+                        dist = np.linalg.norm(coords - unk_coords)
+                        if dist <= 10:
+                            collision = check_collision_only_occupied(coords, unk_coords, map_info)
+                            if not collision:
+                                adjacent_matrix[i, j] = 2
+                                adjacent_matrix[j, i] = 2
+            if node.is_unknown_node:
+                # 找范围内未知节点，直接连边3，无碰撞检测
+                for j, (unk_coords, is_unk) in enumerate(zip(all_node_coords, is_unknown_list)):
+                    if is_unk and i != j:
+                        dist = np.linalg.norm(coords - unk_coords)
+                        if dist <= 2 * NODE_RESOLUTION:
+                            adjacent_matrix[i, j] = 2
+                            adjacent_matrix[j, i] = 2
+
+
         # for i in range(n_nodes):
         #     for j in range(n_nodes):
         #         if adjacent_matrix[i, j] != adjacent_matrix[j, i]:
@@ -484,37 +541,47 @@ class Node:
                     observable_frontiers.add((point[0], point[1]))
             
             self.utility = len(observable_frontiers)
-
-            # # 预测节点密度增强效用
-            # pred_count = sum(
-            #     1 for p in new_unknown_coords
-            #     if np.linalg.norm(np.array(p) - self.coords) <= self.utility_range
-            # )
-
-            # # 可调节参数
-            # max_scale = 2.0
-            # scale_base = int(np.pi * self.utility_range**2 / 0.3)  # 每个节点占 0.3㎡
-            # scale = min(1.0 + pred_count / max(scale_base, 1), max_scale)
-
-            # self.utility = int(base_utility * scale)
-            count = 0
-            scale = 1.0
-            if self.utility > 0 and new_unknown_coords is not None:
-                # ==== 可调参数 ====
-                max_scale = 2.0               # 最大放大倍数
-                scale_base_count = 10         # 达到最大scale时所需预测节点数
-                radius = self.utility_range   # 统计半径范围
+            if (
+                self.utility > 0
+                and PRED_NODES_AFFECT_UTILITY
+                and new_unknown_coords is not None
+                and len(new_unknown_coords) > 0
+            ):
+                count = 0
+                radius = self.utility_range    # 按你原来的定义
                 for pred_coord in new_unknown_coords:
                     if np.linalg.norm(np.array(pred_coord) - self.coords) <= radius:
                         count += 1
-
-                scale = min(1.0 + count / scale_base_count, max_scale)
+                scale = min(1.0 + count / max(1, UTILITY_SCALE_BASE_COUNT), UTILITY_SCALE_MAX)
                 self.utility *= scale
+
+            # —— 最小阈值 + 取整（固定为整数） ——
             if self.utility <= MIN_UTILITY:
                 self.utility = 0
                 observable_frontiers = set()
-            print(f"[Debug][Node {self.coords}] Utility before={len(observable_frontiers)}, predicted_nodes={count}, scale={scale:.2f}, final_utility={self.utility:.2f}")
+            # else:
+            #     self.utility = float(round(self.utility, 1))
+            # print(f"[Debug][Node {self.coords}] Utility before={len(observable_frontiers)}, final_utility={self.utility:.1f}")
             return observable_frontiers
+            # count = 0
+            # scale = 1.0
+            # if self.utility > 0 and new_unknown_coords is not None:
+            #     # ==== 可调参数 ====
+            #     max_scale = 2.0               # 最大放大倍数
+            #     scale_base_count = 10         # 达到最大scale时所需预测节点数
+            #     radius = self.utility_range  # 统计半径范围
+            #     for pred_coord in new_unknown_coords:
+            #         if np.linalg.norm(np.array(pred_coord) - self.coords) <= radius:
+            #             count += 1
+
+            #     scale = min(1.0 + count / scale_base_count, max_scale)
+            #     self.utility *= scale
+            # if self.utility <= MIN_UTILITY:
+            #     self.utility = 0
+            #     observable_frontiers = set()
+            # return observable_frontiers
+            
+            
 
     def update_neighbor_nodes(self, updating_map_info, nodes_dict):
         for i in range(self.neighbor_matrix.shape[0]):
@@ -573,24 +640,44 @@ class Node:
                 self.observable_frontiers.add((point[0], point[1]))
 
         self.utility = len(self.observable_frontiers)
-        if self.utility > 0 and new_unknown_coords is not None:
-            # ==== 可调参数 ====
-            max_scale = 2.0               # 最大放大倍数
-            scale_base_count = 10         # 达到最大scale时所需预测节点数
-            radius = self.utility_range   # 统计半径范围
-
+        if (
+            self.utility > 0
+            and PRED_NODES_AFFECT_UTILITY
+            and new_unknown_coords is not None
+            and len(new_unknown_coords) > 0
+        ):
             count = 0
+            radius = self.utility_range
             for pred_coord in new_unknown_coords:
                 if np.linalg.norm(np.array(pred_coord) - self.coords) <= radius:
                     count += 1
-
-            scale = min(1.0 + count / scale_base_count, max_scale)
+            scale = min(1.0 + count / max(1, UTILITY_SCALE_BASE_COUNT), UTILITY_SCALE_MAX)
             self.utility *= scale
+
         if self.utility <= MIN_UTILITY:
             self.utility = 0
             self.observable_frontiers = set()
             self.need_update_neighbor = False
-        # print(f"[Debug][Node {self.coords}] Utility before={len(self.observable_frontiers)}, predicted_nodes={count}, scale={scale:.2f}, final_utility={self.utility:.2f}")
+        # else:
+        #     self.utility = float(round(self.utility, 1))
+        # if self.utility > 0 and new_unknown_coords is not None:
+        #     # ==== 可调参数 ====
+        #     max_scale = 2.0               # 最大放大倍数
+        #     scale_base_count = 10         # 达到最大scale时所需预测节点数
+        #     radius = self.utility_range   # 统计半径范围
+
+        #     count = 0
+        #     for pred_coord in new_unknown_coords:
+        #         if np.linalg.norm(np.array(pred_coord) - self.coords) <= radius:
+        #             count += 1
+
+        #     scale = min(1.0 + count / scale_base_count, max_scale)
+        #     self.utility *= scale
+        # if self.utility <= MIN_UTILITY:
+        #     self.utility = 0
+        #     self.observable_frontiers = set()
+        #     self.need_update_neighbor = False
+        # # print(f"[Debug][Node {self.coords}] Utility before={len(self.observable_frontiers)}, final_utility={self.utility:.1f}")
 
 
     def delete_observed_frontiers(self, observed_frontiers):
