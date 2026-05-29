@@ -24,10 +24,24 @@ This is a novel exploration framework that synergistically combines global graph
 
 This work has been accepted by the **IEEE International Conference on Robotics and Automation (ICRA) 2026**.
 
+<p align="center">
+   <img src="demo/pipeline.png" width="720"/>
+</p>
+
 **Paper link:** https://arxiv.org/abs/2509.19916
 
 ---
 
+## 🎮: DEMO
+
+The following demo shows the proposed GUIDE framework performing long-horizon autonomous exploration in complex environments using diffusion-based global graph inference.
+
+<p align="center">
+   <img src="demo/demo1.gif" width="48%"/>
+  <img src="demo/demo2.gif" width="48%"/>
+</p>
+
+---
 ## :rocket: Code Release
 
 
@@ -128,6 +142,8 @@ Run `test_driver.py`
 
 Test results will be printed on terminal and saved as a CSV
 `inference_gifs` directory will be created in `diffusion_exploration/data/date/time/name_of_run`.
+
+---
 
 ## :star: Credit
 
